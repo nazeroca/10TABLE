@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <title>[Directive 7.0] 課題選択式ノーツシステム</title>
+    <style>
+        /* ベース: モバイル縦画面前提のレイアウトとリセット */
+        * { box-sizing: border-box; }
+        :root { 
+            --notes-height: 22vh; 
+            --main-text-color: #e6e8eb;
+            --buff-color: #88FF88; 
+            --debuff-color: #FF8888; 
+        }
+        html, body { height: 100%; }
+        html, body { overscroll-behavior: none; }
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans JP, Helvetica, Arial, sans-serif;
+            text-align: center;
+            color: var(--main-text-color);
+            background: radial-gradient(120vw 80vh at 50% -10%, #441f2a 0%, #220e14 60%, #1a0a0f 100%);
+            overflow: hidden;
+        }
+
+        /* ===== 課題実行中タイマー ===== */
+        #challenge-timer {
+            position: fixed;
+            top: 3vh;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            font-size: 6vh;
+            font-weight: bold;
+            color: #ffffff;
+            text-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
+            display: none; 
+        }
+
+        /* ===== 実行中ステータス表示 ===== */
+        #current-task-display {
+            position: fixed;
+            top: 11vh; 
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            width: 90vw;
+            max-width: 500px; 
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #555;
+            border-radius: 8px;
+            padding: 1.5vh;
+            display: none; 
+            color: white;
+        }
+        #current-task-display .task-title {
+            font-size: 2.2vh;
+            font-weight: bold;
+            color: #ffddaa;
+            margin-bottom: 0.5vh;
+        }
+        #current-task-display .task-effect {
+            font-size: 1.8vh;
+            color: #e0e0e0;
+        }
+        #current-task-display .task-effect.buff { color: var(--buff-color); }
+        #current-task-display .task-effect.debuff { color: var(--debuff-color); }
+        #current-task-display .task-effect.chaos { color: #FF88FF; }
+
+        /* ===== ノーツレーン（画面下部） ===== */
+        #notes-container {
+            position: fixed;
+            left: 0;
+            bottom: 0;
+            width: 100vw;
+            height: var(--notes-height);
+            z-index: 50;
+            pointer-events: none;
+        }
+        #notes-game-area {
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 100vw;
+            height: calc(var(--notes-height) - 4vh);
+            overflow: hidden;
+        }
+        #notes-judge-line {
+            position: absolute;
+            left: 20vw;
+            bottom: 0;
+            width: .4vw;
+            height: calc(var(--notes-height) - 10vh);
+            background: linear-gradient(180deg, rgba(255,100,150,.9), rgba(255,50,100,.2));
+            box-shadow: 0 0 2vh rgba(255,100,150,.6);
+        }
+        .note {
+            position: absolute;
+            bottom: 2vh;
+            left: 100vw;
+            width: 13.3vw;
+            height: 13.3vw;
+            border-radius: 50%;
+            background: radial-gradient(circle, #FF66A0 0%, #FF3380 30%, #CC0055 70%, #880033 100%);
+            border: .5vw solid rgba(255,255,255,.7);
+            box-shadow: 0 0 4vh rgba(255, 100, 150, 0.55), inset 0 0 2vh rgba(255,255,255,.35);
+            transition: opacity 0.1s ease-out;
+        }
+
+        /* ===== 課題選択画面 ===== */
+        #challenge-select-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start; 
+            align-items: center;
+            padding: 3vh 2vh 2vh 2vh; 
+            color: white;
+        }
+        #challenge-select-screen h2 {
+            font-size: 3vh;
+            margin-top: 0;
+            margin-bottom: 1vh;
+            color: #ff99cc;
+            text-shadow: 0 0 1vh #ff3380;
+            flex-shrink: 0; 
+        }
+        #rest-timer {
+            font-size: 2.5vh;
+            color: #FFFF66; 
+            margin-bottom: 2vh;
+            font-weight: bold;
+            flex-shrink: 0; 
+            transition: color 0.5s;
+        }
+
+        /* スクロール可能なコンテナ */
+        #challenge-list-container {
+            width: 100%;
+            flex-grow: 1; 
+            overflow-y: auto; 
+            touch-action: pan-y; /* スクロールを許可 */
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        #challenge-list-container::-webkit-scrollbar {
+            display: none;
+        }
+
+        #challenge-grid {
+            display: grid;
+            grid-template-columns: 1fr; 
+            gap: 1.5vh;
+            width: 90vw; 
+            max-width: 500px; 
+            margin: 0 auto; 
+        }
+
+        .challenge-btn {
+            background: #2a2a3e;
+            border: 2px solid #667;
+            border-radius: 8px;
+            padding: 1.5vh 2vh;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.2s, border-color 0.2s;
+            text-align: left;
+        }
+        .challenge-btn:hover {
+            background-color: #3a3a4e;
+            border-color: #ff99cc;
+        }
+        .challenge-btn:disabled {
+            background-color: #1a1a2e;
+            color: #555;
+            border-color: #444;
+            opacity: 0.7;
+        }
+        .challenge-info {
+            flex-grow: 1;
+        }
+        .challenge-btn .title {
+            font-weight: bold;
+            font-size: 2vh;
+            color: #ffddaa;
+            margin-bottom: 0.5vh;
+        }
+        .challenge-btn .desc {
+            font-size: 1.6vh;
+            color: #ccc;
+        }
+        
+        .challenge-effect-display {
+            font-size: 1.8vh;
+            font-weight: bold;
+            margin-top: 1vh;
+            color: #999; 
+        }
+        .challenge-effect-display.buff { color: var(--buff-color); }
+        .challenge-effect-display.debuff { color: var(--debuff-color); }
+        .challenge-effect-display.chaos { color: #FF88FF; }
+        .challenge-effect-display.hidden { color: #999; }
+    </style>
+</head>
+<body>
+    <div id="challenge-timer">00:00.0</div>
+    <div id="current-task-display"></div> 
+
+    <div id="challenge-select-screen">
+        <h2>課題を選択してください</h2>
+        <div id="rest-timer">休憩残り: 01:00</div>
+        
+        <div id="challenge-list-container">
+            <div id="challenge-grid">
+                </div>
+        </div>
+    </div>
+
+    <div id="notes-container">
+        <div id="notes-judge-line"></div>
+        <div id="notes-game-area"></div>
+    </div>
+
+    <audio id="hit-sound-template" src="hit.mp3" preload="auto"></audio>
+
+    <script>
+        'use strict';
+
+        // スクロール禁止ロジック
+        (() => {
+            const listContainer = document.getElementById('challenge-list-container');
+            window.addEventListener('touchmove', (e) => {
+                let targetElement = e.target;
+                let isInsideScrollContainer = false;
+                while (targetElement && targetElement !== document.body) {
+                    if (targetElement === listContainer) {
+                        isInsideScrollContainer = true;
+                        break;
+                    }
+                    targetElement = targetElement.parentElement;
+                }
+                if (!isInsideScrollContainer) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+            
+            window.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
+            window.addEventListener('keydown', (e) => {
+                const key = e.key;
+                if ((e.ctrlKey || e.metaKey) && (key === '+' || key === '-' || key === '=' || key === '0')) {
+                    e.preventDefault();
+                }
+                if ([' ', 'PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+            let lastTouchEnd = 0;
+            document.addEventListener('touchend', (e) => {
+                if (e.target.closest('#challenge-list-container')) {
+                    return;
+                }
+                const now = Date.now();
+                if (now - lastTouchEnd <= 300) e.preventDefault();
+                lastTouchEnd = now;
+            }, { passive: false });
+            document.addEventListener('gesturestart', (e) => e.preventDefault());
+        })();
+
+        // (NEW) Audioひな形への参照
+        const hitSoundTemplate = document.getElementById('hit-sound-template');
+
+        /**
+         * (MODIFIED) ヒット音を再生する関数 (Audioタグ複製版)
+         * 高速連打に対応するため、再生のたびにAudio要素を複製して再生します
+         */
+        function playHitSound() {
+            if (hitSoundTemplate) {
+                // (MODIFIED) ユーザー操作によるオーディオ再生許可がまだの場合に備える
+                // (cloneNodeは再生許可を引き継がないため)
+                const sound = hitSoundTemplate.cloneNode();
+                sound.play().catch(e => {
+                    // 最初の再生がユーザー操作なしでブロックされた場合のエラー
+                    // console.warn("Audio play blocked (will work after interaction).", e);
+                });
+                
+                // 再生終了後にDOMから削除（メモリリーク防止）
+                sound.addEventListener('ended', () => {
+                    sound.remove();
+                });
+            }
+        }
+
+        // --- バフ/デバフの定義 (合計18個) ---
+        const EFFECT_DEFINITIONS = [
+            { id: 1,  name: '大休憩',   desc: '次の休憩時間が60秒延長', type: 'rest_time_add',        value: 60000, style: 'buff' },
+            { id: 2,  name: '小休憩',   desc: '次の休憩時間が40秒短縮', type: 'rest_time_sub',        value: 40000, style: 'debuff' },
+            { id: 3,  name: '延長 +30s', desc: 'この課題の実行時間が30秒延長', type: 'duration_add',         value: 30000, style: 'debuff' },
+            { id: 4,  name: '短縮 -10s', desc: 'この課題の実行時間が10秒短縮', type: 'duration_sub',         value: 10000, style: 'buff' },
+            { id: 5,  name: '延長 +20%', desc: 'この課題の実行時間が20%延長', type: 'duration_mult_add',    value: 1.2,   style: 'debuff' },
+            { id: 6,  name: '短縮 -20%', desc: 'この課題の実行時間が20%短縮', type: 'duration_mult_sub',    value: 0.8,   style: 'buff' },
+            { id: 7,  name: '重圧',     desc: '以降の全課題の実行時間が15%増加', type: 'global_duration_mult', value: 1.15,  style: 'debuff' },
+            { id: 8,  name: '加速 +30%', desc: 'この課題のペースが30%増加', type: 'pace_mult_add',        value: 0.7,   style: 'debuff' }, 
+            { id: 9,  name: '減速 -30%', desc: 'この課題のペースが30%減少', type: 'pace_mult_sub',        value: 1.3,   style: 'buff' },   
+            { id: 10, name: 'ループ',   desc: '30%の確率でこの課題を再実行', type: 'loop',                 value: 0.3,   style: 'chaos' },
+            { id: 11, name: 'シャッフル', desc: '全課題の効果を再割り当て', type: 'persistent_shuffle',     value: null,  style: 'chaos' },
+            { id: 12, name: '二択',     desc: '次の課題選択肢が2つになる', type: 'persistent_choice_lock', value: null,  style: 'debuff' },
+            { id: 13, name: '混沌',     desc: '効果を隠し、再割り当て', type: 'persistent_shuffle_hide', value: null,  style: 'chaos' },
+            { id: 14, name: '指示放棄', desc: '課題中、指示がランダムに10秒停止', type: 'instruction_skip', value: 10000, style: 'debuff' },
+            { id: 15, name: 'ラストスパート', desc: '残り10秒でペースが最大化', type: 'last_spurt', value: 500, style: 'debuff' },
+            { id: 16, name: 'タイマー非表示', desc: '課題中、残り時間が見えなくなる', type: 'timer_hide', value: null, style: 'debuff' },
+            { id: 17, name: 'スタッター', desc: '課題中、指示がランダムに3連打になる', type: 'stutter_notes', value: null, style: 'debuff' },
+            { id: 18, name: '効果無効化', desc: '次の課題の効果を無効化する', type: 'persistent_negate_next', value: null, style: 'buff' }
+        ];
+
+        // --- 課題の定義 ---
+        const CHALLENGES = [
+            { id: 1,  name: '① 5分間5秒シコシコ', pace: 5000, duration: 300000, desc: '3分間、5秒に1回のペース', completed: false, assignedEffectId: null },
+            { id: 2,  name: '② 3分間4秒シコシコ',   pace: 4000, duration: 180000,  desc: '1分間、1秒に1回のペース', completed: false, assignedEffectId: null },
+            { id: 3,  name: '③ 3分間2秒シコシコ',   pace: 2000, duration: 180000, desc: '2分間、1秒に1回のペース', completed: false, assignedEffectId: null },
+            { id: 4,  name: '④ 2分間3秒亀頭ぐるぐる',   pace: 3000,  duration: 120000,  desc: '1分間、1秒に2回のペース', completed: false, assignedEffectId: null },
+            { id: 5,  name: '⑤ 2分間1.5秒シコシコ',   pace: 1500,  duration: 120000, desc: '2分間、1秒に2回のペース', completed: false, assignedEffectId: null },
+            { id: 6,  name: '⑥ 1分間3秒ハードシコシコ',  pace: 3000,  duration: 60000,  desc: '30秒間、1秒に3回のペース', completed: false, assignedEffectId: null },
+            { id: 7,  name: '⑦ 1分間2秒シコシコ',   pace: 2000,  duration: 60000,  desc: '1分間、1秒に3回のペース', completed: false, assignedEffectId: null },
+            { id: 8,  name: '⑧ 1分間1秒シコシコ',  pace: 1000,  duration: 60000,  desc: '30秒間、1秒に4回のペース', completed: false, assignedEffectId: null },
+            { id: 9,  name: '⑨ 30秒間1秒シコシコ',   pace: 1000,  duration: 30000,  desc: '1分間、1秒に4回のペース', completed: false, assignedEffectId: null },
+            { id: 10, name: '⑩ 15秒間0.5秒シコシコ',   pace: 500,  duration: 15000,  desc: '30秒間、全力のペース',   completed: false, assignedEffectId: null }
+        ];
+
+        // DOM 参照
+        const notesGameArea = document.getElementById('notes-game-area');
+        const challengeSelectScreen = document.getElementById('challenge-select-screen');
+        const challengeGrid = document.getElementById('challenge-grid');
+        const challengeTimerEl = document.getElementById('challenge-timer'); 
+        const restTimerEl = document.getElementById('rest-timer');       
+        const currentTaskDisplayEl = document.getElementById('current-task-display'); 
+        
+        let gameState = {};
+        const REST_DURATION_DEFAULT = 60000; 
+        const PENALTY_DURATION = 30000; 
+        const PENALTY_PACE = 1000;       
+
+        let notesActive = false;
+        let notesTimerId = null; 
+        let currentInterval = 1000; 
+        
+        let currentChallenge = null; 
+        let challengeStartTime = 0; 
+
+        let challengeTimerRafId = null;
+        let restTimerRafId = null;
+        let restStartTime = 0;
+        
+        let notesActiveStutter = false;
+
+        /**
+         * 配列をシャッフルする
+         */
+        function shuffleArray(array) {
+            let newArr = [...array];
+            for (let i = newArr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+            }
+            return newArr;
+        }
+
+        /**
+         * ミリ秒をフォーマットする
+         */
+        function formatTime(ms, includeMilliseconds = false) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            const paddedMinutes = String(minutes).padStart(2, '0');
+            const paddedSeconds = String(seconds).padStart(2, '0');
+
+            if (includeMilliseconds) {
+                const milliseconds = Math.floor((ms % 1000) / 100);
+                return `${paddedMinutes}:${paddedSeconds}.${milliseconds}`;
+            } else {
+                return `${paddedMinutes}:${paddedSeconds}`;
+            }
+        }
+
+        /**
+         * 課題実行中タイマーの更新ループ
+         */
+        function updateChallengeTimer() {
+            if (!notesActive || (!currentChallenge && !gameState.isPenaltyActive)) {
+                cancelAnimationFrame(challengeTimerRafId);
+                return;
+            }
+            
+            let duration = gameState.isPenaltyActive ? PENALTY_DURATION : currentChallenge.duration;
+            
+            if (!gameState.isPenaltyActive && currentChallenge.effect?.type === 'timer_hide') {
+                challengeTimerEl.textContent = "??:??.?";
+                challengeTimerRafId = requestAnimationFrame(updateChallengeTimer);
+                return;
+            }
+            
+            const elapsed = performance.now() - challengeStartTime;
+            const remainingMs = Math.max(0, duration - elapsed);
+            
+            challengeTimerEl.textContent = formatTime(remainingMs, true); 
+            
+            if (gameState.isPenaltyActive && remainingMs === 0) {
+                stopPenaltySequence();
+                return;
+            }
+            
+            challengeTimerRafId = requestAnimationFrame(updateChallengeTimer);
+        }
+        
+        /**
+         * 休憩タイマーの更新ループ (カウントダウン)
+         */
+        function updateRestTimer() {
+            if (challengeSelectScreen.style.display !== 'flex') {
+                cancelAnimationFrame(restTimerRafId);
+                return;
+            }
+            
+            const elapsed = performance.now() - restStartTime;
+            const remainingMs = Math.max(0, gameState.nextRestDuration - elapsed);
+            
+            restTimerEl.textContent = `休憩残り: ${formatTime(remainingMs, false)}`; 
+            
+            if (remainingMs === 0) {
+                restTimerEl.textContent = "休憩終了 00:00";
+                restTimerEl.style.color = "#FF6666"; 
+                cancelAnimationFrame(restTimerRafId); 
+                
+                startPenaltySequence();
+                
+                return; 
+            } else {
+                restTimerEl.style.color = "#FFFF66"; 
+                restTimerRafId = requestAnimationFrame(updateRestTimer);
+            }
+        }
+
+        /**
+         * ノーツを1つ生成し、レーンを流す
+         */
+        function spawnNote() {
+            if (!notesGameArea) return;
+            
+            const el = document.createElement('div');
+            el.className = 'note';
+
+            const hue = Math.floor(Math.random() * 360);
+            el.style.setProperty('--note-c1', `hsl(${hue}, 90%, 75%)`);
+            el.style.setProperty('--note-c4', `hsl(${hue}, 70%, 45%)`);
+            el.style.setProperty('--note-glow', `hsla(${hue}, 100%, 70%, ${Math.random() * 0.4 + 0.5})`);
+
+            notesGameArea.appendChild(el);
+            
+            const start = performance.now();
+            const duration = 3000; 
+
+            function step(now) {
+                const t = Math.min(1, (now - start) / duration);
+                const startX = window.innerWidth;
+                const endX = -window.innerWidth * 0.133; 
+                const x = startX + (endX - startX) * t;
+                el.style.left = x + 'px';
+
+                const judgeX = window.innerWidth * 0.2;
+                const center = x + (window.innerWidth * 0.0665); 
+                
+                if (!el.played && center <= judgeX) {
+                    el.played = true;
+                    el.style.opacity = '0.3'; 
+                    playHitSound(); // (MODIFIED) 
+                    setTimeout(() => el.remove(), 100);
+                    return;
+                }
+
+                if (t < 1) {
+                    requestAnimationFrame(step);
+                } else {
+                    el.remove();
+                }
+            }
+            requestAnimationFrame(step);
+        }
+
+        /**
+         * ノーツの生成を（一時）停止する
+         */
+        function stopNotesInternal() {
+            notesActive = false;
+            if (notesTimerId) { 
+                clearTimeout(notesTimerId); 
+                notesTimerId = null; 
+            }
+            if (notesGameArea) {
+                Array.from(notesGameArea.children).forEach(c => c.remove());
+            }
+        }
+        
+        /**
+         * 課題にエフェクトをランダムに割り当てる
+         */
+        function assignEffectsToChallenges() {
+            console.log("[Directive 7.0] バフ/デバフの割り当てをシャッフルします。");
+            const selectedEffects = shuffleArray(EFFECT_DEFINITIONS).slice(0, 10);
+            const shuffledIndexes = shuffleArray([...Array(10).keys()]);
+            
+            for(let i=0; i < 10; i++) {
+                const challengeIndex = shuffledIndexes[i];
+                if (CHALLENGES[challengeIndex].completed) continue;
+                CHALLENGES[challengeIndex].assignedEffectId = selectedEffects[i].id;
+            }
+        }
+
+        /**
+         * ゲーム全体の初期化
+         */
+        function initializeGame() {
+            gameState = {
+                globalDurationMultiplier: 1.0,
+                choiceLockActive: false,
+                effectsAreHidden: false,
+                nextRestDuration: REST_DURATION_DEFAULT,
+                negateNextEffect: false,
+                isPenaltyActive: false 
+            };
+            
+            CHALLENGES.forEach(c => {
+                c.completed = false;
+                c.assignedEffectId = null;
+            });
+            
+            assignEffectsToChallenges();
+            setupChallengeScreen();
+        }
+
+        /**
+         * 課題選択画面を表示する
+         */
+        function setupChallengeScreen() {
+            restStartTime = performance.now(); 
+            challengeGrid.innerHTML = ''; 
+            
+            let availableChallenges = CHALLENGES.filter(c => !c.completed);
+            
+            if (gameState.choiceLockActive) {
+                console.log("[Directive 7.0] デバフ「二択」が発動。");
+                availableChallenges = shuffleArray(availableChallenges).slice(0, 2);
+                gameState.choiceLockActive = false; 
+            }
+
+            if (availableChallenges.length === 0) {
+                alert("全課題完了！おめでとうございます。");
+                initializeGame(); 
+                return;
+            }
+            
+            availableChallenges.forEach(challenge => {
+                const btn = document.createElement('button');
+                btn.className = 'challenge-btn';
+                btn.dataset.id = challenge.id;
+                
+                const effect = EFFECT_DEFINITIONS.find(e => e.id === challenge.assignedEffectId);
+                let effectDesc = "（効果なし）"; 
+                let effectStyle = "";
+                
+                if (effect) {
+                    effectDesc = effect.desc; 
+                    effectStyle = effect.style;
+                }
+
+                if (gameState.effectsAreHidden) {
+                    effectDesc = "？？？？？？";
+                    effectStyle = "hidden";
+                }
+                
+                btn.innerHTML = `
+                    <div class="challenge-info">
+                        <div class="title">${challenge.name}</div>
+                        <div class="desc">${challenge.desc}</div>
+                        <div class="challenge-effect-display ${effectStyle}">
+                            ${effectDesc}
+                        </div>
+                    </div>
+                `;
+                
+                btn.addEventListener('click', () => {
+                    startChallenge(challenge.id);
+                });
+                challengeGrid.appendChild(btn);
+            });
+            
+            challengeSelectScreen.style.display = 'flex';
+            
+            restTimerEl.style.color = "#FFFF66"; 
+            cancelAnimationFrame(restTimerRafId); 
+            restTimerRafId = requestAnimationFrame(updateRestTimer);
+        }
+
+        /**
+         * ペナルティシーケンスを開始する
+         */
+        function startPenaltySequence() {
+            if (gameState.isPenaltyActive) return; 
+            console.log("[Directive 7.0] 休憩時間終了。ペナルティシーケンスを開始します。");
+
+            // (NEW) ユーザー操作なしでオーディオ再生を開始するための試行
+            if (hitSoundTemplate) {
+                hitSoundTemplate.play().catch(() => {});
+                hitSoundTemplate.pause();
+            }
+
+            gameState.isPenaltyActive = true;
+            challengeStartTime = performance.now();
+            
+            challengeSelectScreen.style.display = 'none';
+            
+            currentTaskDisplayEl.innerHTML = `
+                <div class="task-title" style="color: #FF6666;">ペナルティ</div>
+                <div class="task-effect debuff">30秒間、超高速ノーツに耐えてください</div>
+            `;
+            currentTaskDisplayEl.style.display = 'block';
+
+            challengeTimerEl.style.display = 'block';
+            cancelAnimationFrame(challengeTimerRafId);
+            challengeTimerRafId = requestAnimationFrame(updateChallengeTimer);
+
+            notesActive = true;
+            function penaltyNoteLoop() {
+                if (!gameState.isPenaltyActive || !notesActive) return;
+                spawnNote();
+                notesTimerId = setTimeout(penaltyNoteLoop, PENALTY_PACE);
+            }
+            penaltyNoteLoop();
+        }
+        
+        /**
+         * ペナルティシーケンスを停止する
+         */
+        function stopPenaltySequence() {
+            console.log("[Directive 7.0] ペナルティシーケンス終了。");
+            gameState.isPenaltyActive = false;
+            
+            stopNotesInternal(); 
+
+            cancelAnimationFrame(challengeTimerRafId);
+            challengeTimerEl.style.display = 'none';
+            currentTaskDisplayEl.style.display = 'none';
+            
+            setupChallengeScreen();
+        }
+
+
+        /**
+         * 選択された課題を開始する
+         */
+        function startChallenge(challengeId) {
+            cancelAnimationFrame(restTimerRafId); 
+            
+            // (NEW) ユーザー操作でオーディオコンテキストを起動
+            if (hitSoundTemplate) {
+                hitSoundTemplate.play().catch(e => console.warn("Audio context unlock failed, will retry on hit."));
+                hitSoundTemplate.pause();
+                hitSoundTemplate.currentTime = 0;
+            }
+
+            const baseChallengeData = CHALLENGES.find(c => c.id === challengeId);
+            if (!baseChallengeData) return;
+            
+            let effectData = EFFECT_DEFINITIONS.find(e => e.id === baseChallengeData.assignedEffectId);
+
+            if (gameState.negateNextEffect) {
+                console.log("[Directive 7.0] バフ「効果無効化」が発動。この課題の効果は無効化されます。");
+                effectData = null; 
+                gameState.negateNextEffect = false; 
+            }
+            
+            currentChallenge = {
+                ...baseChallengeData, 
+                pace: baseChallengeData.pace,     
+                duration: baseChallengeData.duration, 
+                effect: effectData 
+            };
+            
+            notesActiveStutter = false;
+
+            currentChallenge.duration *= gameState.globalDurationMultiplier;
+
+            gameState.nextRestDuration = REST_DURATION_DEFAULT;
+
+            if (effectData) {
+                console.log(`[Directive 7.0] エフェクト「${effectData.name}」を発動。`);
+                switch(effectData.type) {
+                    case 'rest_time_add':
+                        gameState.nextRestDuration += effectData.value;
+                        break;
+                    case 'rest_time_sub':
+                        gameState.nextRestDuration = Math.max(10000, gameState.nextRestDuration - effectData.value); 
+                        break;
+                    case 'duration_add':
+                        currentChallenge.duration += effectData.value;
+                        break;
+                    case 'duration_sub':
+                        currentChallenge.duration = Math.max(10000, currentChallenge.duration - effectData.value); 
+                        break;
+                    case 'duration_mult_add':
+                    case 'duration_mult_sub':
+                        currentChallenge.duration *= effectData.value;
+                        break;
+                    case 'pace_mult_add':
+                    case 'pace_mult_sub':
+                        currentChallenge.pace *= effectData.value;
+                        currentChallenge.duration *= effectData.value; 
+                        break;
+                    case 'global_duration_mult':
+                        gameState.globalDurationMultiplier *= effectData.value;
+                        break;
+                    case 'persistent_choice_lock':
+                        gameState.choiceLockActive = true;
+                        break;
+                    case 'timer_hide':
+                    case 'instruction_skip':
+                    case 'last_spurt':
+                    case 'stutter_notes':
+                        break;
+                    case 'loop':
+                    case 'persistent_shuffle':
+                    case 'persistent_shuffle_hide':
+                    case 'persistent_negate_next':
+                        break;
+                }
+            }
+
+            let effectDesc = "（効果なし）";
+            let effectStyle = "";
+            if (currentChallenge.effect) {
+                effectDesc = currentChallenge.effect.desc;
+                effectStyle = currentChallenge.effect.style;
+            }
+            currentTaskDisplayEl.innerHTML = `
+                <div class="task-title">${currentChallenge.name}</div>
+                <div class="task-effect ${effectStyle}">${effectDesc}</div>
+            `;
+            currentTaskDisplayEl.style.display = 'block';
+
+            currentInterval = currentChallenge.pace; 
+            challengeStartTime = performance.now(); 
+
+            challengeSelectScreen.style.display = 'none';
+
+            challengeTimerEl.style.display = 'block';
+            cancelAnimationFrame(challengeTimerRafId); 
+            challengeTimerRafId = requestAnimationFrame(updateChallengeTimer);
+
+            startNotes();
+        }
+
+        /**
+         * 実行中の課題を停止し、選択画面に戻る
+         */
+        function stopChallenge() {
+            stopNotesInternal();
+            notesActive = false;
+
+            cancelAnimationFrame(challengeTimerRafId);
+            challengeTimerEl.style.display = 'none';
+            currentTaskDisplayEl.style.display = 'none'; 
+            
+            const completedChallenge = CHALLENGES.find(c => c.id === currentChallenge.id);
+            if (completedChallenge) {
+                completedChallenge.completed = true; 
+            }
+            
+            const effect = currentChallenge.effect;
+            
+            if (effect) {
+                if (effect.type === 'persistent_negate_next') {
+                    console.log("[Directive 7.0] バフ「効果無効化」をセット。");
+                    gameState.negateNextEffect = true;
+                }
+
+                if (effect.type === 'loop' && Math.random() < effect.value) {
+                    console.log(`[Directive 7.0] デバフ「ループ」が発動！ 課題「${currentChallenge.name}」を再実行します。`);
+                    if (completedChallenge) {
+                        completedChallenge.completed = false; 
+                    }
+                    startChallenge(currentChallenge.id); 
+                    return; 
+                }
+                
+                if (effect.type === 'persistent_shuffle' || effect.type === 'persistent_shuffle_hide') {
+                    console.log(`[Directive 7.0] カオスエフェクトが発動！ 全エフェクトをシャッフルします。`);
+                    assignEffectsToChallenges();
+                }
+                
+                if (effect.type === 'persistent_shuffle_hide') {
+                    console.log(`[Directive 7.0] ...さらに、全エフェクトが非表示になります。`);
+                    gameState.effectsAreHidden = true;
+                }
+            }
+            
+            currentChallenge = null;
+            
+            setupChallengeScreen();
+        }
+
+        /**
+         * ノーツの生成ループを開始する
+         */
+        function startNotes() {
+            stopNotesInternal();
+            notesActive = true;
+            scheduleNextNote(); 
+        }
+
+        /**
+         * 次のノーツ生成をスケジュールする（メインループ）
+         */
+        function scheduleNextNote() {
+            if (!notesActive || gameState.isPenaltyActive) return; 
+
+            const now = performance.now();
+            const elapsed = now - challengeStartTime; 
+            const remainingMs = Math.max(0, currentChallenge.duration - elapsed);
+
+            // --- 1. 課題の終了判定 ---
+            if (remainingMs <= 0) {
+                console.log(`[Directive 7.0] 課題 ${currentChallenge.name} 完了。`);
+                stopChallenge(); 
+                return;
+            }
+            
+            // --- 2. ラストスパート判定 ---
+            let effectiveInterval = currentInterval;
+            if (currentChallenge.effect?.type === 'last_spurt' && remainingMs <= 10000) {
+                effectiveInterval = currentChallenge.effect.value; 
+            }
+
+            // --- 3. 指示放棄判定 ---
+            if (currentChallenge.effect?.type === 'instruction_skip' && Math.random() < 0.02 && !notesActiveStutter) {
+                console.log(`[Directive 7.0] デバフ「指示放棄」が発動。${currentChallenge.effect.value / 1000}秒間停止します。`);
+                notesTimerId = setTimeout(scheduleNextNote, currentChallenge.effect.value); 
+                return; 
+            }
+
+            // --- 4. スタッター判定 ---
+            if (currentChallenge.effect?.type === 'stutter_notes' && 
+                Math.random() < 0.05 && 
+                !notesActiveStutter && 
+                !(currentChallenge.effect?.type === 'last_spurt' && remainingMs <= 10000)) 
+            {
+                console.log("[Directive 7.0] デバフ「スタッター」が発動。");
+                notesActiveStutter = true; 
+                
+                spawnNote();
+                setTimeout(() => spawnNote(), 400);
+                setTimeout(() => {
+                    spawnNote();
+                    
+                    notesTimerId = setTimeout(() => {
+                        notesActiveStutter = false; 
+                        scheduleNextNote();
+                    }, effectiveInterval);
+
+                }, 800);
+                
+                return; 
+            }
+
+            // --- 5. 通常のノーツ生成 ---
+            spawnNote();
+            notesTimerId = setTimeout(scheduleNextNote, effectiveInterval);
+        }
+
+        // ページ読み込み時に実行
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('[Directive 7.0 System] 課題選択式システム起動。');
+            initializeGame();
+        });
+    </script>
+</body>
+</html>
